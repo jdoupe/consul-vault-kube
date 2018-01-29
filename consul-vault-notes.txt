@@ -29,12 +29,6 @@ kubectl create -f consul.yaml
 
 #vault-consul-on-kube:
 
-# TODO: Figure out how to provide acl_agent_token to consul container 
-# - existing (from servers) or new one?
-# (i.e. get it out of the config file)
-
-
-
 #Need "vault-consul-key"...
 curl --request PUT \
     --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
@@ -49,7 +43,6 @@ NEW_VAULT_TOKEN=`cat new_vault_token`
 
 kubectl create secret generic vault-consul-key --from-literal=consul-key=${NEW_VAULT_TOKEN}
 
-# TODO: How do we stop using "disable_registration" (in vault config)?
 # TODO: Does port 9000 need to be on? bound to 0.0.0.0? Seems localhost would be sufficient.
 
 kubectl create configmap vault-config --from-file vault-config.json
@@ -57,7 +50,6 @@ kubectl create configmap vault-config --from-file vault-config.json
 #Maybe services?
 #kubectl create -f vault-services.yaml
 
-# TODO: acl_agent_token needs to be added dynamically
 kubectl create configmap vault-consul-config --from-file=vault-consul-config.json
 
 # Create new cert for vault, put whole CA chain in "fullcert" below
@@ -66,7 +58,6 @@ kubectl create secret tls vaulttls --cert=certs/vaulttls.fullcert.pem --key=cert
 kubectl create -f vault.yaml
 
 kubectl port-forward vault-0 8503:8500 &
-kubectl port-forward vault-1 8504:8500 &
 
 curl \
     --request PUT \
@@ -76,15 +67,6 @@ curl \
   \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
 }" http://127.0.0.1:8503/v1/agent/token/acl_agent_token
 
-curl \
-    --request PUT \
-    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
-    --data \
-"{
-  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
-}" http://127.0.0.1:8504/v1/agent/token/acl_agent_token
-
-
 kubectl exec -it vault-0 -c vault -- vault init
 
 # following unseal keys are just examples, get real ones from "init" command above
@@ -93,6 +75,18 @@ kubectl exec -it vault-0 -c vault -- vault unseal TUN9ripBeIL/HLhnouKLev5kGsHz+u
 kubectl exec -it vault-0 -c vault -- vault unseal VTh8r004tr0WjrHNPuGxagC6n6nSpcqvBL/X9U4RbFI7
 kubectl exec -it vault-0 -c vault -- vault unseal 5sGwJ7s4aA0cN0nSnfT6GQfU5o3maNPatMcEbZMCazcH
 
+
+kubectl port-forward vault-1 8504:8500 &
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8504/v1/agent/token/acl_agent_token
+
 kubectl exec -it vault-1 -c vault -- vault unseal TUN9ripBeIL/HLhnouKLev5kGsHz+uyEgurhzQaKEcqS
 kubectl exec -it vault-1 -c vault -- vault unseal VTh8r004tr0WjrHNPuGxagC6n6nSpcqvBL/X9U4RbFI7
 kubectl exec -it vault-1 -c vault -- vault unseal 5sGwJ7s4aA0cN0nSnfT6GQfU5o3maNPatMcEbZMCazcH
+
