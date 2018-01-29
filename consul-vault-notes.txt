@@ -1,0 +1,98 @@
+#Create CA
+#Generate key/cert for server.dc1.cluster.local - needs serverAuth AND clientAuth
+#Update consul-on-kubernetes/configs/server.json with file names 
+#  (path should still be /etc/tls/... since that is where the files will be mapped to in the pod)
+
+
+#consul-on-kubernetes:
+
+# TODO: Why are we serving HTTP on 8500?  HTTPS on 8443, but we're not using
+# (vault is configured to use 8500! it's local, but still...)
+# Stop and start gets cluster pissed.  Tries to join to old IPs. How to recover?
+
+kubectl create configmap consul-config --from-file=consul-config.json
+
+kubectl create -f consul-services.yaml
+
+GOSSIP_ENCRYPTION_KEY=`head -c16 /dev/urandom | base64`
+
+kubectl create secret generic consul-secret \
+  --from-literal="gossip-encryption-key=${GOSSIP_ENCRYPTION_KEY}" \
+  --from-file=certs/ica1.cert.pem \
+  --from-file=certs/server.dc1.cluster.local.cert.pem \
+  --from-file=certs/server.dc1.cluster.local.key.pem
+#(update file names above with ones from previous cert steps)
+
+kubectl create -f consul.yaml
+
+#run post-configure
+
+#vault-consul-on-kube:
+
+# TODO: Figure out how to provide acl_agent_token to consul container 
+# - existing (from servers) or new one?
+# (i.e. get it out of the config file)
+
+
+
+#Need "vault-consul-key"...
+curl --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+'{
+  "Name": "Vault Token",
+  "Type": "client",
+  "Rules": "service \"vault\" { policy = \"write\" }\n key \"vault/\" { policy = \"write\" }\n node \"vault\" { policy = \"write\" }\n session \"vault\" { policy = \"write\" }"
+}' http://127.0.0.1:8500/v1/acl/create | tee >(jq -r .ID > new_vault_token)
+
+NEW_VAULT_TOKEN=`cat new_vault_token`
+
+kubectl create secret generic vault-consul-key --from-literal=consul-key=${NEW_VAULT_TOKEN}
+
+# TODO: How do we stop using "disable_registration" (in vault config)?
+# TODO: Does port 9000 need to be on? bound to 0.0.0.0? Seems localhost would be sufficient.
+
+kubectl create configmap vault-config --from-file vault-config.json
+
+#Maybe services?
+#kubectl create -f vault-services.yaml
+
+# TODO: acl_agent_token needs to be added dynamically
+kubectl create configmap vault-consul-config --from-file=vault-consul-config.json
+
+# Create new cert for vault, put whole CA chain in "fullcert" below
+kubectl create secret tls vaulttls --cert=certs/vaulttls.fullcert.pem --key=certs/vaulttls.key
+
+kubectl create -f vault.yaml
+
+kubectl port-forward vault-0 8503:8500 &
+kubectl port-forward vault-1 8504:8500 &
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8503/v1/agent/token/acl_agent_token
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8504/v1/agent/token/acl_agent_token
+
+
+kubectl exec -it vault-0 -c vault -- vault init
+
+# following unseal keys are just examples, get real ones from "init" command above
+
+kubectl exec -it vault-0 -c vault -- vault unseal TUN9ripBeIL/HLhnouKLev5kGsHz+uyEgurhzQaKEcqS
+kubectl exec -it vault-0 -c vault -- vault unseal VTh8r004tr0WjrHNPuGxagC6n6nSpcqvBL/X9U4RbFI7
+kubectl exec -it vault-0 -c vault -- vault unseal 5sGwJ7s4aA0cN0nSnfT6GQfU5o3maNPatMcEbZMCazcH
+
+kubectl exec -it vault-1 -c vault -- vault unseal TUN9ripBeIL/HLhnouKLev5kGsHz+uyEgurhzQaKEcqS
+kubectl exec -it vault-1 -c vault -- vault unseal VTh8r004tr0WjrHNPuGxagC6n6nSpcqvBL/X9U4RbFI7
+kubectl exec -it vault-1 -c vault -- vault unseal 5sGwJ7s4aA0cN0nSnfT6GQfU5o3maNPatMcEbZMCazcH

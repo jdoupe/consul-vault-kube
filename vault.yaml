@@ -1,0 +1,115 @@
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: vault
+spec:
+  serviceName: vault
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: "init-fixconsulconfig"
+          image: "busybox"
+          command: ['sh','-c','sed -i "s#GOSSIPKEY#$(GOSSIP_ENCRYPTION_KEY)#" /etc/consul/vault-consul-config.json; sed -i "s#VAULT_CONSUL_KEY#$(VAULT_CONSUL_KEY)#" /etc/vault/vault-config.json']
+          env:
+            - name: GOSSIP_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: consul-secret
+                  key: gossip-encryption-key
+            - name: VAULT_CONSUL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vault-consul-key
+                  key: consul-key
+          volumeMounts:
+            - name: vault-consul-config-volume
+              mountPath: /etc/consul
+            - name: vault-config-volume
+              mountPath: /etc/vault
+      containers:
+        - name: vault
+          image: "vault:0.9.1"
+          securityContext:
+            capabilities:
+              add:
+                - IPC_LOCK
+#          ports:
+#            - containerPort: 8200
+#              name: main-port
+#            - containerPort: 8201
+#              name: local-talk-port
+#            - containerPort: 9000
+#              name: monitor-port
+          env:
+            # VAULT_ADDR is provided only for convenience - so don't have to set when logging in.
+            - name: VAULT_ADDR
+              value: http://localhost:9000
+            - name: VAULT_REDIRECT_ADDR
+              value: http://localhost:9000
+          args:
+            - "server"
+            - "--log-level=debug"
+            - "-config=/etc/vault/vault-config.json"
+          readinessProbe:
+            httpGet:
+              # "leader" returns a 503 for a sealed vault, which is basically what we want
+              path: /v1/sys/leader
+              port: 9000
+            initialDelaySeconds: 30
+            timeoutSeconds: 1
+          volumeMounts:
+              # name must match the volume name below
+              - name: "vault-tls-volume"
+                mountPath: /etc/tls
+              - name: log-storage
+                mountPath: /vault/logs
+              - name: vault-config-volume
+                mountPath: /etc/vault
+        - name: consul-agent
+          image: "consul:1.0.3"
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          args:
+            - "consul"
+            - "agent"
+            - "-data-dir=/tmp/consul"
+            - "-retry-join=consul.$(NAMESPACE).svc.cluster.local"
+            - "-config-file=/etc/consul/vault-consul-config.json"
+            - "-node=$(MY_POD_NAME)"
+          volumeMounts:
+            - name: vault-consul-config-volume
+              mountPath: /etc/consul
+            - name: consul-secret-volume
+              mountPath: /etc/tls
+      volumes:
+        - name: vault-tls-volume
+          secret: 
+            secretName: vaulttls
+        - name: log-storage
+          emptyDir: {}
+        - name: vault-config-volume
+          configMap:
+            name: vault-config
+        - name: vault-consul-config-volume
+          configMap:
+            name: vault-consul-config
+        - name: consul-secret-volume
+          secret:
+            secretName: consul-secret
+
+---
+                    #disable_registration = "true"
+                    #cluster_addr = "https://$(VAULT_1_SERVICE_HOST):$(VAULT_1_SERVICE_PORT_BACKENDPORT)"

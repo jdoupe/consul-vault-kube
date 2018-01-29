@@ -1,0 +1,10 @@
+{
+  "acl_datacenter":"dc1",
+  "datacenter":"dc1",
+  "acl_default_policy":"deny",
+  "acl_down_policy":"deny",
+  "ca_file": "/etc/tls/ica1.cert.pem",
+  "cert_file": "/etc/tls/server.dc1.cluster.local.cert.pem",
+  "key_file": "/etc/tls/server.dc1.cluster.local.key.pem",
+  "encrypt": "GOSSIPKEY"
+}

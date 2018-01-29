@@ -1,0 +1,45 @@
+
+kubectl port-forward consul-0 8500:8500 &
+kubectl port-forward consul-1 8501:8500 &
+kubectl port-forward consul-2 8502:8500 &
+
+sleep 2
+
+curl --request PUT http://127.0.0.1:8500/v1/acl/bootstrap | tee >(jq -r .ID > acl_master_token)
+
+ACL_MASTER_TOKEN=`cat acl_master_token`
+
+curl --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+'{
+  "Name": "Agent Token",
+  "Type": "client",
+  "Rules": "node \"\" { policy = \"write\" } service \"\" { policy = \"read\" } key \"_rexec\" { policy = \"write\" }"
+}' http://127.0.0.1:8500/v1/acl/create | tee >(jq -r .ID > new_acl_agent_token)
+
+NEW_ACL_AGENT_TOKEN=`cat new_acl_agent_token`
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8500/v1/agent/token/acl_agent_token
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8501/v1/agent/token/acl_agent_token
+
+curl \
+    --request PUT \
+    --header "X-Consul-Token: ${ACL_MASTER_TOKEN}" \
+    --data \
+"{
+  \"Token\": \"${NEW_ACL_AGENT_TOKEN}\"
+}" http://127.0.0.1:8502/v1/agent/token/acl_agent_token
